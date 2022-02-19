@@ -1,47 +1,48 @@
-local plugin = require("kong.plugins.base_plugin"):extend()
-local responses = require "kong.tools.responses"
-
 local aws_v4 = require "kong.plugins.aws.v4"
+local request_util = require "kong.plugins.aws.request-util"
 
-function plugin:new()
-  plugin.super.new(self, "aws")
-end
+local plugin = {
+  VERSION = "1.0.0",
+  PRIORITY = 10,
+}
 
 function plugin:access(plugin_conf)
-  plugin.super.access(self)
-
-  ngx.req.read_body()
 
   local incoming_headers = ngx.req.get_headers()
   local headers = {}
 
   -- Sign the request using the `Host` without
   -- a port, as this is what Kong uses.
-  headers["host"] = ngx.var.host
+  -- headers["host"] = ngx.var.host
+  --headers["host"] = "rekognition.us-east-1.amazonaws.com"
+  headers["host"] = string.format("rekognition.%s.amazonaws.com", plugin_conf.aws_region)
 
   -- Proxy the content headers only as they are AWS requirements.
   -- They are also likely the only headers to remain consistent
   -- between Client -> Kong -> AWS.
   headers["content-length"] = incoming_headers["content-length"]
   headers["content-type"] = incoming_headers["content-type"]
+  headers["X-Amz-Target"] = incoming_headers["X-Amz-Target"]
+
+  local body_data = request_util.read_request_body(false)
 
   local opts = {
     region = plugin_conf.aws_region,
     service = plugin_conf.aws_service,
     access_key = plugin_conf.aws_key,
     secret_key = plugin_conf.aws_secret,
-    timestamp = plugin_conf.timestamp,
-    body = ngx.req.get_body_data(),
+    body = body_data,
     canonical_querystring = ngx.var.args,
     headers = headers,
     method = ngx.req.get_method(),
-    path = ngx.var.uri,
+    path = string.gsub(ngx.var.upstream_uri, "^https?://[a-z0-9.-]+", ""),
     port = ngx.var.port,
   }
 
   local request, err = aws_v4(opts)
   if err then
-    return responses.send_HTTP_INTERNAL_SERVER_ERROR(err)
+    kong.log.err(err)
+    return kong.response.exit(500, "Internal Server Error")
   end
 
   for key, val in pairs(request.headers) do
@@ -52,7 +53,5 @@ function plugin:access(plugin_conf)
   -- for signing the request.
   ngx.var.upstream_host = request.host
 end
-
-plugin.PRIORITY = 750
 
 return plugin
