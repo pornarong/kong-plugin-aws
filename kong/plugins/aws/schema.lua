@@ -6,6 +6,5 @@ return {
     aws_service = {type = "string", required = true},
     aws_key = {type = "string", required = true},
     aws_secret = {type = "string", required = true},
-    timestamp = {type = "timestamp", required = false},
   }
 }
